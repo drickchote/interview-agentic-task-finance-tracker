@@ -1,3 +1,4 @@
+import { Wallet } from "lucide-react";
 import { useEffect, useCallback } from "react";
 import { Link, useLocation } from "@tanstack/react-router";
 import { m } from "#/paraglide/messages";
@@ -68,6 +69,11 @@ function getNavItems(): NavItem[] {
           <path strokeLinecap="round" strokeLinejoin="round" d="M6 6h.008v.008H6V6z" />
         </svg>
       ),
+    },
+    {
+      to: "/budgets",
+      label: m.nav_budgets(),
+      icon: <Wallet className="size-4" aria-hidden="true" />,
     },
     {
       to: "/transactions",

@@ -1,3 +1,4 @@
+import { invalidateBudgetQueries } from "#/lib/budget-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -441,6 +442,7 @@ function CategoriesPage() {
       color: string;
     }) => createCategoryFn({ data }),
     onSuccess: () => {
+      void invalidateBudgetQueries(queryClient);
       queryClient.invalidateQueries({ queryKey: CATEGORIES_QUERY_KEY });
     },
   });
@@ -453,6 +455,7 @@ function CategoriesPage() {
       color: string;
     }) => updateCategoryFn({ data }),
     onSuccess: () => {
+      void invalidateBudgetQueries(queryClient);
       queryClient.invalidateQueries({ queryKey: CATEGORIES_QUERY_KEY });
     },
   });
@@ -461,6 +464,7 @@ function CategoriesPage() {
     mutationFn: (data: { id: string; reassignToCategoryId: string | null }) =>
       deleteCategoryFn({ data }),
     onSuccess: () => {
+      void invalidateBudgetQueries(queryClient);
       queryClient.invalidateQueries({ queryKey: CATEGORIES_QUERY_KEY });
       queryClient.invalidateQueries({ queryKey: ["transactions"] });
     },

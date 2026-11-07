@@ -1,3 +1,4 @@
+import { invalidateBudgetQueries } from "#/lib/budget-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useCallback, useEffect, useState } from "react";
@@ -446,6 +447,7 @@ function ReceiptScanPage() {
 
       if (saveResult.success) {
         setSaved(true);
+        void invalidateBudgetQueries(queryClient);
         queryClient.invalidateQueries({ queryKey: ["transactions"] });
       } else {
         setSavingError("Unknown error during save");

@@ -1,3 +1,4 @@
+import { invalidateBudgetQueries } from "#/lib/budget-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -139,6 +140,7 @@ function CategorizationPage() {
   }, [editingRule]);
 
   const invalidate = () => {
+    void invalidateBudgetQueries(queryClient);
     queryClient.invalidateQueries({ queryKey: RULES_QUERY_KEY });
     queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
     queryClient.invalidateQueries({ queryKey: [...TRANSACTIONS_QUERY_KEY, "uncategorized-count"] });

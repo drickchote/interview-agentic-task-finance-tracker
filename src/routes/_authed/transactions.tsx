@@ -1,3 +1,4 @@
+import { invalidateBudgetQueries } from "#/lib/budget-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -1112,6 +1113,7 @@ function TransactionsPage() {
         },
       }),
     onSuccess: () => {
+      void invalidateBudgetQueries(queryClient);
       queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
       queryClient.refetchQueries({ queryKey: CATEGORIES_QUERY_KEY });
       setIsFormOpen(false);
@@ -1137,6 +1139,7 @@ function TransactionsPage() {
         },
       }),
     onSuccess: () => {
+      void invalidateBudgetQueries(queryClient);
       queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
       queryClient.refetchQueries({ queryKey: CATEGORIES_QUERY_KEY });
       setIsFormOpen(false);
@@ -1147,6 +1150,7 @@ function TransactionsPage() {
   const deleteMutation = useMutation({
     mutationFn: (data: { id: string }) => deleteTransactionFn({ data }),
     onSuccess: () => {
+      void invalidateBudgetQueries(queryClient);
       queryClient.invalidateQueries({ queryKey: TRANSACTIONS_QUERY_KEY });
       queryClient.refetchQueries({ queryKey: CATEGORIES_QUERY_KEY });
       setDeleteConfirmId(null);

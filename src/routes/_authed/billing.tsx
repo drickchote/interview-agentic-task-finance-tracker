@@ -1,3 +1,4 @@
+import { BILLING_QUERY_KEY } from "#/lib/budget-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -11,7 +12,7 @@ import { m } from "#/paraglide/messages";
 import { Button } from "#/components/ui/button";
 
 
-const BILLING_QUERY_KEY = ["billing"] as const;
+
 
 type BillingSearch = { checkout?: "success" | "cancelled" };
 

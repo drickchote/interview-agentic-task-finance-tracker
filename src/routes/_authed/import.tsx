@@ -1,3 +1,4 @@
+import { invalidateBudgetQueries } from "#/lib/budget-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -455,6 +456,7 @@ function ImportPage() {
         }
 
         if (chunk.type === "complete") {
+          void invalidateBudgetQueries(queryClient);
           finalSummary = chunk.summary;
         }
       }
@@ -495,6 +497,7 @@ function ImportPage() {
     await deleteImportBatchFn({ data: { batchId: undoBatchId } });
     setUndoSubmitting(false);
     setUndoBatchId(null);
+    void invalidateBudgetQueries(queryClient);
     queryClient.invalidateQueries({ queryKey: IMPORT_HISTORY_QUERY_KEY });
     queryClient.invalidateQueries({ queryKey: ["transactions"] });
   };
