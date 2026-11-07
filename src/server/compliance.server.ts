@@ -70,6 +70,18 @@ export async function collectUserExport(userId: string) {
     .select()
     .from(schema.categories)
     .where(eq(schema.categories.user_id, userId));
+  const budgets = await db
+    .select()
+    .from(schema.budgets)
+    .where(eq(schema.budgets.user_id, userId));
+  const budgetNotifications = await db
+    .select()
+    .from(schema.budget_notifications)
+    .where(inArray(
+      schema.budget_notifications.budget_id,
+      db.select({ id: schema.budgets.id }).from(schema.budgets)
+        .where(eq(schema.budgets.user_id, userId)),
+    ));
   const transactions = await db
     .select()
     .from(schema.transactions)
@@ -116,6 +128,8 @@ export async function collectUserExport(userId: string) {
     user,
     accounts,
     categories,
+    budgets,
+    budgetNotifications,
     transactions,
     rules,
     importBatches,
@@ -144,6 +158,8 @@ export async function buildExportZip(userId: string): Promise<Uint8Array> {
         user: data.user,
         accounts: data.accounts,
         categories: data.categories,
+        budgets: data.budgets,
+        budgetNotifications: data.budgetNotifications,
         transactions: data.transactions,
         categorizationRules: data.rules,
         importBatches: data.importBatches,
@@ -163,6 +179,26 @@ export async function buildExportZip(userId: string): Promise<Uint8Array> {
       2,
     ),
   );
+
+  const budgetColumns = ["id", "user_id", "category_id", "limit_minor", "created_at", "updated_at"] as const;
+  files["budgets.csv"] = strToU8(toCsv([...budgetColumns], data.budgets.map((budget) =>
+    budgetColumns.map((key) => {
+      const value = budget[key];
+      return value instanceof Date ? value.toISOString() : value;
+    }),
+  )));
+  const notificationColumns = [
+    "id", "budget_id", "month", "recipient_email", "limit_minor", "spent_minor",
+    "delivery_idempotency_key", "status", "attempt_count", "next_retry_at", "processing_at",
+    "sent_at", "created_at", "updated_at", "first_attempt_at", "last_error",
+    "email_provider", "email_from", "email_subject", "email_text",
+  ] as const;
+  files["budget_notifications.csv"] = strToU8(toCsv([...notificationColumns], data.budgetNotifications.map((notification) =>
+    notificationColumns.map((key) => {
+      const value = notification[key];
+      return value instanceof Date ? value.toISOString() : value;
+    }),
+  )));
 
   files["transactions.csv"] = strToU8(
     toCsv(
@@ -274,8 +310,8 @@ function imageExt(imagePath: string): string {
 // --- Account deletion ------------------------------------------------------
 
 /**
- * Irreversibly delete a user: every DB row (children first — there are no
- * cascade clauses), receipt objects in storage, and the Stripe customer.
+ * Irreversibly delete a user: every DB row (children first; budget notifications
+ * cascade from budgets), receipt objects in storage, and the Stripe customer.
  * Storage and Stripe cleanup run after the DB transaction commits and are
  * best-effort with loud logging — a transient failure there must not leave
  * the DB half-deleted.
@@ -305,6 +341,9 @@ export async function hardDeleteUser(userId: string): Promise<void> {
   if (!user) return;
 
   await db.transaction(async (tx) => {
+    // Serialize with budget creation and category removal for this user.
+    await tx.select({ id: schema.users.id }).from(schema.users)
+      .where(eq(schema.users.id, userId)).for("update");
     const userReceiptIds = tx
       .select({ id: schema.receipts.id })
       .from(schema.receipts)

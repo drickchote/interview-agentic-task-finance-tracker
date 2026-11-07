@@ -35,6 +35,17 @@ async function seedFullUser(userId: string) {
     user_id: userId,
     name: "Groceries",
   });
+  await db.insert(schema.budgets).values({
+    id: `${userId}-budget`, user_id: userId, category_id: `${userId}-cat`, limit_minor: 1000,
+  });
+  await db.insert(schema.budget_notifications).values({
+    id: `${userId}-notification`, budget_id: `${userId}-budget`, month: "2026-07",
+    recipient_email: `${userId}@example.com`, limit_minor: 1000, spent_minor: 1234,
+    status: "failed", attempt_count: 2, next_retry_at: new Date("2026-07-02T12:00:00Z"),
+    processing_at: new Date("2026-07-02T11:59:00Z"), first_attempt_at: new Date("2026-07-02T11:00:00Z"),
+    email_provider: "test", email_from: "sender@example.com", email_subject: "Saved alert",
+    email_text: "Saved spending snapshot", last_error: "delivery_unconfirmed",
+  });
   await db.insert(schema.import_batches).values({
     id: `${userId}-batch`,
     user_id: userId,
@@ -109,7 +120,8 @@ describe("compliance: CSV writer", () => {
 
 describe("compliance: data export", () => {
   const userId = "export-test-user";
-  afterEach(() => wipeUser(userId));
+  const otherId = "export-other-user";
+  afterEach(async () => { await wipeUser(userId); await wipeUser(otherId); });
 
   it("builds a zip with export.json, CSVs, and receipt images", async () => {
     await seedFullUser(userId);
@@ -125,6 +137,22 @@ describe("compliance: data export", () => {
     expect(json.receipts[0].image_file).toBe(`receipts/${userId}-rcpt.jpg`);
     expect(json.categorizationRules).toHaveLength(1);
     expect(json.subscription.plan).toBe("free");
+    expect(json.budgets).toEqual([expect.objectContaining({
+      id: `${userId}-budget`, user_id: userId, category_id: `${userId}-cat`, limit_minor: 1000,
+    })]);
+    expect(json.budgetNotifications).toEqual([expect.objectContaining({
+      id: `${userId}-notification`, budget_id: `${userId}-budget`, month: "2026-07",
+      recipient_email: `${userId}@example.com`, limit_minor: 1000, spent_minor: 1234,
+      delivery_idempotency_key: `budget-alert:${userId}-budget:2026-07`,
+      status: "failed", attempt_count: 2, next_retry_at: "2026-07-02T12:00:00.000Z",
+      first_attempt_at: "2026-07-02T11:00:00.000Z", last_error: "delivery_unconfirmed",
+      email_text: "Saved spending snapshot",
+    })]);
+    expect(strFromU8(files["budgets.csv"])).toContain(`"${userId}-budget"`);
+    const notificationsCsv = strFromU8(files["budget_notifications.csv"]);
+    expect(notificationsCsv).toContain('"attempt_count"');
+    expect(notificationsCsv).toContain(`"budget-alert:${userId}-budget:2026-07"`);
+    expect(notificationsCsv).toContain('"2026-07-02T12:00:00.000Z"');
 
     const txnCsv = strFromU8(files["transactions.csv"]);
     expect(txnCsv).toContain('"Grocery store"');
@@ -139,11 +167,33 @@ describe("compliance: data export", () => {
       0xff, 0xd8, 0xff, 0x42,
     ]);
   });
+
+  it("exports only the requesting user's budgets and notification snapshots", async () => {
+    await seedFullUser(userId);
+    await seedFullUser(otherId);
+    const files = unzipSync(await buildExportZip(userId));
+    const json = JSON.parse(strFromU8(files["export.json"]));
+    expect(json.budgets.map((row: { id: string }) => row.id)).toEqual([`${userId}-budget`]);
+    expect(json.budgetNotifications.map((row: { id: string }) => row.id)).toEqual([`${userId}-notification`]);
+    expect(strFromU8(files["budgets.csv"])).not.toContain(otherId);
+    expect(strFromU8(files["budget_notifications.csv"])).not.toContain(otherId);
+  });
+
+  it("includes empty budget arrays and CSV headers for users without budgets", async () => {
+    await db.insert(schema.users).values({ id: userId, username: userId, password_hash: "x" });
+    const files = unzipSync(await buildExportZip(userId));
+    const json = JSON.parse(strFromU8(files["export.json"]));
+    expect(json.budgets).toEqual([]);
+    expect(json.budgetNotifications).toEqual([]);
+    expect(strFromU8(files["budgets.csv"]).split("\n")).toHaveLength(1);
+    expect(strFromU8(files["budget_notifications.csv"])).toContain('"delivery_idempotency_key"');
+  });
 });
 
 describe("compliance: account hard delete", () => {
   const userId = "delete-test-user";
-  afterEach(() => wipeUser(userId));
+  const otherId = "delete-other-user";
+  afterEach(async () => { await wipeUser(userId); await wipeUser(otherId); });
 
   it("removes every row and the stored receipt images", async () => {
     const { imageKey } = await seedFullUser(userId);
@@ -160,11 +210,43 @@ describe("compliance: account hard delete", () => {
       db.select().from(schema.receipt_items).where(eq(schema.receipt_items.receipt_id, `${userId}-rcpt`)),
       db.select().from(schema.ai_usage).where(eq(schema.ai_usage.user_id, userId)),
       db.select().from(schema.subscriptions).where(eq(schema.subscriptions.user_id, userId)),
+      db.select().from(schema.budgets).where(eq(schema.budgets.user_id, userId)),
+      db.select().from(schema.budget_notifications).where(eq(schema.budget_notifications.budget_id, `${userId}-budget`)),
     ]);
     for (const rows of remaining) {
       expect.soft(rows).toHaveLength(0);
     }
     expect(await storage.get(imageKey)).toBeNull();
+  });
+
+  it("preserves another user's budgets and notifications during account removal", async () => {
+    await seedFullUser(userId);
+    await seedFullUser(otherId);
+    const budgetsBefore = await db.select().from(schema.budgets).where(eq(schema.budgets.user_id, otherId));
+    const noticesBefore = await db.select().from(schema.budget_notifications)
+      .where(eq(schema.budget_notifications.budget_id, `${otherId}-budget`));
+    await hardDeleteUser(userId);
+    expect(await db.select().from(schema.budgets).where(eq(schema.budgets.user_id, otherId))).toEqual(budgetsBefore);
+    expect(await db.select().from(schema.budget_notifications)
+      .where(eq(schema.budget_notifications.budget_id, `${otherId}-budget`))).toEqual(noticesBefore);
+  });
+
+  it("rolls back budgets and notifications if account removal fails", async () => {
+    const { imageKey } = await seedFullUser(userId);
+    await db.insert(schema.users).values({ id: otherId, username: otherId, password_hash: "x" });
+    await db.insert(schema.categorization_rules).values({
+      id: "foreign-blocker", user_id: otherId, category_id: `${userId}-cat`, pattern: "block",
+    });
+    try {
+      await expect(hardDeleteUser(userId)).rejects.toThrow();
+      expect(await db.select().from(schema.users).where(eq(schema.users.id, userId))).toHaveLength(1);
+      expect(await db.select().from(schema.budgets).where(eq(schema.budgets.user_id, userId))).toHaveLength(1);
+      expect(await db.select().from(schema.budget_notifications)
+        .where(eq(schema.budget_notifications.budget_id, `${userId}-budget`))).toHaveLength(1);
+      expect(await storage.get(imageKey)).not.toBeNull();
+    } finally {
+      await db.delete(schema.categorization_rules).where(eq(schema.categorization_rules.id, "foreign-blocker"));
+    }
   });
 });
 
