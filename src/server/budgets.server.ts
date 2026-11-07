@@ -1,5 +1,6 @@
-import { and, asc, eq, gte, lt, sql } from "drizzle-orm";
+import { and, asc, count, eq, gte, lt, sql } from "drizzle-orm";
 import { db as defaultDb, schema, type Db } from "#/db";
+import { getEntitlements } from "./billing.server";
 import { createBudgetSchema, updateBudgetLimitSchema, deleteBudgetSchema } from "./budgets.schemas";
 
 /** Calendar-date cutoffs: transaction dates carry no time zone. */
@@ -97,24 +98,53 @@ export async function createBudgetInternal(
   db: Db = defaultDb,
 ) {
   const data = createBudgetSchema.parse(input);
-  const [category] = await db
-    .select({ id: schema.categories.id })
-    .from(schema.categories)
-    .where(and(eq(schema.categories.id, data.categoryId), eq(schema.categories.user_id, userId)))
-    .limit(1);
-  if (!category) return { error: "Category not found" } as const;
-  const [budget] = await db
-    .insert(schema.budgets)
-    .values({
-      id: crypto.randomUUID(),
-      user_id: userId,
-      category_id: data.categoryId,
-      limit_minor: data.limitMinor,
-    })
-    .onConflictDoNothing({ target: [schema.budgets.user_id, schema.budgets.category_id] })
-    .returning();
-  if (!budget) return { error: "A budget already exists for this category" } as const;
-  return { success: true, data: budget } as const;
+  return db.transaction(
+    async (tx) => {
+      // Lock the durable user row, even when no budgets exist yet. All budget
+      // creators for this user serialize their entitlement/count/insert sequence.
+      const [user] = await tx
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(eq(schema.users.id, userId))
+        .for("update");
+      if (!user) return { error: "User not found" } as const;
+      const [category] = await tx
+        .select({ id: schema.categories.id })
+        .from(schema.categories)
+        .where(
+          and(eq(schema.categories.id, data.categoryId), eq(schema.categories.user_id, userId)),
+        )
+        .limit(1);
+      if (!category) return { error: "Category not found" } as const;
+      const { maxBudgets } = await getEntitlements(userId, tx);
+      if (maxBudgets !== null) {
+        const [usage] = await tx
+          .select({ count: count() })
+          .from(schema.budgets)
+          .where(eq(schema.budgets.user_id, userId));
+        if (usage.count >= maxBudgets) {
+          return {
+            error: "Free plan budget limit reached. Upgrade to Pro for unlimited budgets.",
+            code: "budget_limit_reached",
+            limit: maxBudgets,
+          } as const;
+        }
+      }
+      const [budget] = await tx
+        .insert(schema.budgets)
+        .values({
+          id: crypto.randomUUID(),
+          user_id: userId,
+          category_id: data.categoryId,
+          limit_minor: data.limitMinor,
+        })
+        .onConflictDoNothing({ target: [schema.budgets.user_id, schema.budgets.category_id] })
+        .returning();
+      if (!budget) return { error: "A budget already exists for this category" } as const;
+      return { success: true, data: budget } as const;
+    },
+    { isolationLevel: "read committed" },
+  );
 }
 
 export async function updateBudgetLimitInternal(

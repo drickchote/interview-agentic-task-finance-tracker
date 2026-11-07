@@ -9,6 +9,7 @@ import {
   updateBudgetLimitInternal,
   deleteBudgetInternal,
 } from "#/server/budgets.server";
+import { getBillingStatusInternal } from "#/server/billing-status.server";
 
 const now = new Date("2026-11-15T12:00:00Z");
 const create = (categoryId = "root", limitMinor = 1000) =>
@@ -34,6 +35,7 @@ const transaction = (
 
 beforeEach(async () => {
   await db.delete(schema.budgets);
+  await db.delete(schema.subscriptions);
   await db.delete(schema.receipt_items);
   await db.delete(schema.receipts);
   await db.delete(schema.transactions);
@@ -56,6 +58,91 @@ beforeEach(async () => {
     { id: "unrelated", user_id: "owner", name: "Transport" },
     { id: "foreign", user_id: "other", name: "Other", parent_id: "root" },
   ]);
+});
+
+describe("budget plan limits", () => {
+  const pro = () =>
+    db.insert(schema.subscriptions).values({
+      user_id: "owner",
+      plan: "pro",
+      status: "active",
+    });
+
+  it("allows three Free budgets, blocks the fourth, and scopes usage to the user", async () => {
+    for (const category of ["root", "child", "grandchild"]) {
+      expect(await create(category)).toMatchObject({ success: true });
+    }
+    expect(await create("unrelated")).toMatchObject({
+      code: "budget_limit_reached",
+      limit: 3,
+    });
+    expect(
+      await createBudgetInternal("other", { categoryId: "foreign", limitMinor: 100 }),
+    ).toMatchObject({ success: true });
+    expect(await getBillingStatusInternal("owner")).toMatchObject({
+      plan: "free",
+      entitlements: { maxBudgets: 3 },
+      usage: { budgetsUsed: 3 },
+    });
+    expect(await getBillingStatusInternal("other")).toMatchObject({ usage: { budgetsUsed: 1 } });
+    expect(await getBillingStatusInternal("missing")).toMatchObject({ usage: { budgetsUsed: 0 } });
+  });
+
+  it("allows only one concurrent creation when a Free user has one slot left", async () => {
+    await create("root");
+    await create("child");
+    const results = await Promise.all([create("grandchild"), create("unrelated")]);
+    expect(results.filter((r) => r.success)).toHaveLength(1);
+    expect(results.filter((r) => "code" in r && r.code === "budget_limit_reached")).toHaveLength(1);
+    expect(await listBudgets("owner", now)).toHaveLength(3);
+  });
+
+  it("applies the limit to concurrent creation from an empty account", async () => {
+    const results = await Promise.all(
+      ["root", "child", "grandchild", "unrelated"].map((id) => create(id)),
+    );
+    expect(results.filter((r) => r.success)).toHaveLength(3);
+    expect(await listBudgets("owner", now)).toHaveLength(3);
+  });
+
+  it("allows Pro budgets beyond three and reports an unlimited allowance", async () => {
+    await pro();
+    const results = await Promise.all(
+      ["root", "child", "grandchild", "unrelated"].map((id) => create(id)),
+    );
+    expect(results.every((r) => r.success)).toBe(true);
+    expect(await getBillingStatusInternal("owner")).toMatchObject({
+      plan: "pro",
+      entitlements: { maxBudgets: null },
+      usage: { budgetsUsed: 4 },
+    });
+  });
+
+  it("preserves budgets after downgrade, allows edits/deletion, and resumes creation below three", async () => {
+    await pro();
+    for (const category of ["root", "child", "grandchild", "unrelated"]) await create(category);
+    const before = await listBudgets("owner", now);
+    await db
+      .update(schema.subscriptions)
+      .set({ status: "canceled" })
+      .where(eq(schema.subscriptions.user_id, "owner"));
+    expect(await listBudgets("owner", now)).toEqual(before);
+    expect(await getBillingStatusInternal("owner")).toMatchObject({
+      plan: "free",
+      entitlements: { maxBudgets: 3 },
+      usage: { budgetsUsed: 4 },
+    });
+    expect(
+      await updateBudgetLimitInternal("owner", { id: before[0].id, limitMinor: 2000 }),
+    ).toMatchObject({ success: true });
+    await db.insert(schema.categories).values({ id: "new", user_id: "owner", name: "New" });
+    expect(await create("new")).toMatchObject({ code: "budget_limit_reached" });
+    expect(await deleteBudgetInternal("owner", { id: before[0].id })).toEqual({ success: true });
+    expect(await create("new")).toMatchObject({ code: "budget_limit_reached" });
+    await deleteBudgetInternal("owner", { id: before[1].id });
+    expect(await create("new")).toMatchObject({ success: true });
+    expect(await listBudgets("owner", now)).toHaveLength(3);
+  });
 });
 
 describe("budget business operations", () => {

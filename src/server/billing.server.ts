@@ -17,6 +17,8 @@ export interface Entitlements {
   plan: Plan;
   /** null = unlimited. */
   maxAccounts: number | null;
+  /** null = unlimited. Existing budgets are preserved after downgrades. */
+  maxBudgets: number | null;
   scansPerMonth: number;
 }
 
@@ -32,19 +34,21 @@ export function entitlementsForPlan(plan: Plan): Entitlements {
     return {
       plan,
       maxAccounts: null,
+      maxBudgets: null,
       scansPerMonth: env.billing.proScansPerMonth,
     };
   }
   return {
     plan: "free",
     maxAccounts: env.billing.freeMaxAccounts,
+    maxBudgets: 3,
     scansPerMonth: env.ai.freeScansPerMonth,
   };
 }
 
 export async function getSubscription(
   userId: string,
-  db: Db = defaultDb,
+  db: Pick<Db, "select"> = defaultDb,
 ): Promise<typeof schema.subscriptions.$inferSelect | null> {
   const rows = await db
     .select()
@@ -58,7 +62,7 @@ export async function getSubscription(
  * entitled. No subscription row means free. */
 export async function getEffectivePlan(
   userId: string,
-  db: Db = defaultDb,
+  db: Pick<Db, "select"> = defaultDb,
 ): Promise<Plan> {
   const sub = await getSubscription(userId, db);
   if (sub && sub.plan === "pro" && ENTITLED_STATUSES.has(sub.status)) {
@@ -69,7 +73,7 @@ export async function getEffectivePlan(
 
 export async function getEntitlements(
   userId: string,
-  db: Db = defaultDb,
+  db: Pick<Db, "select"> = defaultDb,
 ): Promise<Entitlements> {
   return entitlementsForPlan(await getEffectivePlan(userId, db));
 }
