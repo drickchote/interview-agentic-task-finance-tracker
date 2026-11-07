@@ -12,6 +12,14 @@ export interface EmailMessage {
   to: string;
   subject: string;
   text: string;
+  /** Snapshot sender for durable deliveries; other callers use configuration. */
+  from?: string;
+}
+
+export class EmailDeliveryError extends Error {
+  constructor(public readonly status: number) {
+    super(`Email provider returned HTTP ${status}`);
+  }
 }
 
 // In-memory capture for TEST_MODE — read back by the /test-emails route so
@@ -22,7 +30,10 @@ export function getCapturedEmails(to?: string): EmailMessage[] {
   return to ? capturedEmails.filter((e) => e.to === to) : [...capturedEmails];
 }
 
-export async function sendEmail(message: EmailMessage): Promise<void> {
+export async function sendEmail(
+  message: EmailMessage,
+  options?: { idempotencyKey: string },
+): Promise<void> {
   switch (env.email.provider) {
     case "test":
       capturedEmails.push(message);
@@ -42,19 +53,19 @@ export async function sendEmail(message: EmailMessage): Promise<void> {
         headers: {
           Authorization: `Bearer ${env.email.resendApiKey}`,
           "Content-Type": "application/json",
+          ...(options ? { "Idempotency-Key": options.idempotencyKey } : {}),
         },
+        signal: AbortSignal.timeout(15_000),
         body: JSON.stringify({
-          from: env.email.from,
+          from: message.from ?? env.email.from,
           to: message.to,
           subject: message.subject,
           text: message.text,
         }),
       });
       if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        throw new Error(
-          `Resend API error ${response.status}: ${body.slice(0, 500)}`,
-        );
+        // Avoid persisting provider bodies, which can contain recipient data.
+        throw new EmailDeliveryError(response.status);
       }
       return;
     }

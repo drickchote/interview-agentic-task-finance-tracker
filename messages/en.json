@@ -402,5 +402,7 @@
   "security_reporting_body": "If you find a security issue, please report it responsibly using the contact listed in our security.txt file. We will acknowledge reports promptly and will not take action against good-faith research.",
   "security_reporting_link": "View security.txt",
   "security_residency_title": "Data residency",
-  "security_residency_body": "Production deployments are recommended to be EU-hosted; the deployment operator's privacy policy states the actual hosting region. The self-hosted AI option keeps receipt images entirely on the operator's own infrastructure."
+  "security_residency_body": "Production deployments are recommended to be EU-hosted; the deployment operator's privacy policy states the actual hosting region. The self-hosted AI option keeps receipt images entirely on the operator's own infrastructure.",
+  "email_budget_exceeded_subject": "Monthly budget exceeded",
+  "email_budget_exceeded_body": "Your {category} budget for {month} has been exceeded. Monthly limit: {limit}. Spending: {spent}. Only expenses are counted."
 }

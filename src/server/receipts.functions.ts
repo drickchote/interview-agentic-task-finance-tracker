@@ -1,3 +1,4 @@
+import { checkBudgetsAfterChange } from "./budget-check.server";
 import { createServerFn } from "@tanstack/react-start";
 import { eq, and, inArray } from "drizzle-orm";
 import { z } from "zod";
@@ -521,7 +522,7 @@ export const saveReceiptAndLink = createServerFn({ method: "POST" })
         user_id: userId,
         account_id: data.accountId,
         date: data.date,
-        amount_minor: data.totalMinor,
+        amount_minor: -Math.abs(data.totalMinor),
         description: data.store_name || null,
         category_id: parentId,
         source: "receipt",
@@ -568,6 +569,7 @@ export const saveReceiptAndLink = createServerFn({ method: "POST" })
       transaction = transaction[0];
     }
 
+    await checkBudgetsAfterChange(userId);
     return {
       success: true,
       receipt_id: receiptId,

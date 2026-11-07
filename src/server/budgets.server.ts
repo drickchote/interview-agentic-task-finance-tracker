@@ -1,6 +1,7 @@
 import { and, asc, count, eq, gte, lt, sql } from "drizzle-orm";
 import { db as defaultDb, schema, type Db } from "#/db";
 import { getEntitlements } from "./billing.server";
+import { checkBudgetsAfterChange } from "./budget-check.server";
 import { createBudgetSchema, updateBudgetLimitSchema, deleteBudgetSchema } from "./budgets.schemas";
 
 /** Calendar-date cutoffs: transaction dates carry no time zone. */
@@ -98,7 +99,7 @@ export async function createBudgetInternal(
   db: Db = defaultDb,
 ) {
   const data = createBudgetSchema.parse(input);
-  return db.transaction(
+  const result = await db.transaction(
     async (tx) => {
       // Lock the durable user row, even when no budgets exist yet. All budget
       // creators for this user serialize their entitlement/count/insert sequence.
@@ -145,6 +146,8 @@ export async function createBudgetInternal(
     },
     { isolationLevel: "read committed" },
   );
+  if (result.success) await checkBudgetsAfterChange(userId, db);
+  return result;
 }
 
 export async function updateBudgetLimitInternal(
@@ -159,6 +162,7 @@ export async function updateBudgetLimitInternal(
     .where(and(eq(schema.budgets.id, data.id), eq(schema.budgets.user_id, userId)))
     .returning();
   if (!budget) return { error: "Budget not found" } as const;
+  await checkBudgetsAfterChange(userId, db);
   return { success: true, data: budget } as const;
 }
 
@@ -173,5 +177,6 @@ export async function deleteBudgetInternal(
     .where(and(eq(schema.budgets.id, data.id), eq(schema.budgets.user_id, userId)))
     .returning({ id: schema.budgets.id });
   if (!budget) return { error: "Budget not found" } as const;
+  await checkBudgetsAfterChange(userId, db);
   return { success: true } as const;
 }

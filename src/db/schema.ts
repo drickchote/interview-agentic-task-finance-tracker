@@ -155,7 +155,15 @@ export const budget_notifications = pgTable(
     month: text("month").notNull(),
     recipient_email: text("recipient_email").notNull(),
     limit_minor: integer("limit_minor").notNull(),
-    spent_minor: integer("spent_minor").notNull(),
+    spent_minor: bigint("spent_minor", { mode: "number" }).notNull(),
+    // Freeze the complete provider payload before delivery. Nullable only for
+    // legacy rows, which require review rather than sending reconstructed mail.
+    email_from: text("email_from"),
+    email_subject: text("email_subject"),
+    email_text: text("email_text"),
+    email_provider: text("email_provider"),
+    first_attempt_at: timestamp("first_attempt_at", { withTimezone: true, mode: "date" }),
+    last_error: text("last_error"),
     delivery_idempotency_key: text("delivery_idempotency_key")
       .notNull()
       .generatedAlwaysAs(sql`'budget-alert:' || "budget_id" || ':' || "month"`),

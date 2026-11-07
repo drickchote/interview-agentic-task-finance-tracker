@@ -1,3 +1,4 @@
+import { checkBudgetsAfterChange } from "./budget-check.server";
 import { createServerFn } from "@tanstack/react-start";
 import { eq, and, asc, desc, count, gte, lte, ilike, isNull, isNotNull, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -303,6 +304,7 @@ export const createTransaction = createServerFn({ method: "POST" })
       source_ref: data.sourceRef || null,
     });
 
+    await checkBudgetsAfterChange(userId);
     return {
       id,
       account_id: data.accountId,
@@ -379,6 +381,7 @@ export const updateTransaction = createServerFn({ method: "POST" })
         ),
       );
 
+    await checkBudgetsAfterChange(userId);
     return { success: true };
   });
 
@@ -417,5 +420,6 @@ export const deleteTransaction = createServerFn({ method: "POST" })
         ),
       );
 
+    await checkBudgetsAfterChange(userId);
     return { success: true };
   });

@@ -1,3 +1,4 @@
+import { checkBudgetsAfterChange } from "./budget-check.server";
 import { createServerFn } from "@tanstack/react-start";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -1076,6 +1077,7 @@ async function* streamConfirmImport(
       row_count: insertRows.length,
     });
     await db.insert(schema.transactions).values(insertRows);
+    await checkBudgetsAfterChange(userId);
 
     if (aiRulesToCreate.length > 0) {
       const aiRulesInsert = aiRulesToCreate.map((rule) => ({
@@ -1231,5 +1233,6 @@ export const deleteImportBatch = createServerFn({ method: "POST" })
         ),
       );
 
+    await checkBudgetsAfterChange(userId);
     return { success: true, deletedTransactions: transactionIds.length };
   });

@@ -1,3 +1,4 @@
+import { checkBudgetsAfterChange } from "./budget-check.server";
 import { createServerFn } from "@tanstack/react-start";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -292,6 +293,7 @@ export const applyRuleToExisting = createServerFn({ method: "POST" })
         );
       updated++;
     }
+    await checkBudgetsAfterChange(userId);
     return { success: true, updated };
   });
 
@@ -492,5 +494,6 @@ export const reCategorizeTransactions = createServerFn({ method: "POST" })
       await db.insert(schema.categorization_rules).values(aiRulesInsert);
     }
 
+    await checkBudgetsAfterChange(userId);
     return { updated, aiCategorized, skipped };
   });

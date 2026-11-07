@@ -1,3 +1,4 @@
+import { checkBudgetsAfterChange } from "./budget-check.server";
 import { createServerFn } from "@tanstack/react-start";
 import { eq, and, asc, count, sql, inArray } from "drizzle-orm";
 import { z } from "zod";
@@ -215,6 +216,7 @@ export const updateCategory = createServerFn({ method: "POST" })
         ),
       );
 
+    await checkBudgetsAfterChange(userId);
     return { success: true };
   });
 
@@ -222,6 +224,13 @@ export const deleteCategory = createServerFn({ method: "POST" })
   .inputValidator(deleteCategorySchema)
   .handler(async ({ data }) => {
     const userId = await requireUserId();
+
+    const [ownedCategory] = await db
+      .select({ id: schema.categories.id })
+      .from(schema.categories)
+      .where(and(eq(schema.categories.id, data.id), eq(schema.categories.user_id, userId)))
+      .limit(1);
+    if (!ownedCategory) return { error: "Category not found" };
 
     // Collect all descendant category IDs (children, grandchildren, etc.)
     const allDescendantIds: string[] = [];
@@ -252,7 +261,7 @@ export const deleteCategory = createServerFn({ method: "POST" })
     }
 
     if (data.reassignToCategoryId) {
-      if (data.reassignToCategoryId === data.id) {
+      if (allIdsToDelete.includes(data.reassignToCategoryId)) {
         return {
           error: "Cannot reassign transactions to the category being deleted",
         };
@@ -305,10 +314,18 @@ export const deleteCategory = createServerFn({ method: "POST" })
       .delete(schema.categorization_rules)
       .where(inArray(schema.categorization_rules.category_id, allIdsToDelete));
 
+    await db
+      .delete(schema.budgets)
+      .where(and(
+        eq(schema.budgets.user_id, userId),
+        inArray(schema.budgets.category_id, allIdsToDelete),
+      ));
+
     // Delete all descendant categories first, then the target
     await db
       .delete(schema.categories)
       .where(inArray(schema.categories.id, allIdsToDelete));
 
+    await checkBudgetsAfterChange(userId);
     return { success: true };
   });

@@ -1,6 +1,7 @@
 import { runComplianceSweep } from "#/server/compliance.server";
 import { env } from "#/server/env";
 import { getLogger } from "#/server/logger";
+import { runBudgetNotificationMaintenance } from "./budget-notifications.server";
 
 //
 // In-process scheduler for the compliance sweep. There is no external job
@@ -24,4 +25,18 @@ export function ensureMaintenanceLoop(): void {
   void sweep();
   // unref: the timer must never keep a shutting-down server process alive.
   setInterval(sweep, SWEEP_INTERVAL_MS).unref();
+  let budgetSweepRunning = false;
+  const budgetSweep = async () => {
+    if (budgetSweepRunning) return;
+    budgetSweepRunning = true;
+    try {
+      await runBudgetNotificationMaintenance();
+    } catch {
+      getLogger().error("budget notification maintenance failed");
+    } finally {
+      budgetSweepRunning = false;
+    }
+  };
+  void budgetSweep();
+  setInterval(budgetSweep, 30_000).unref();
 }
