@@ -702,17 +702,19 @@ function toIsoDatetime(dtLocal: string): string {
   return dtLocal;
 }
 
-// Formats an ISO datetime for display in the transaction list.
-// Shows "May 8, 2026 14:30" if time is non-midnight, or "May 8, 2026" if midnight.
+// Calendar dates must retain their day in every browser timezone. Legacy
+// timestamps keep their existing local date/time display.
 function formatTxDate(iso: string): string {
   if (!iso) return "";
-  const d = new Date(iso + "Z");
+  const isCalendarDate = /^\d{4}-\d{2}-\d{2}$/.test(iso);
+  const d = new Date(isCalendarDate ? `${iso}T00:00:00Z` : iso + "Z");
   if (isNaN(d.getTime())) return iso;
   const hasTime = iso.includes("T") && iso.slice(11) !== "00:00:00";
   const datePart = d.toLocaleDateString("en", {
     month: "short",
     day: "numeric",
     year: "numeric",
+    ...(isCalendarDate ? { timeZone: "UTC" } : {}),
   });
   if (!hasTime) return datePart;
   const timePart = d.toLocaleTimeString("en", {
