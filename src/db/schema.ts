@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   pgTable,
   pgEnum,
@@ -9,6 +10,8 @@ import {
   doublePrecision,
   serial,
   index,
+  unique,
+  check,
 } from "drizzle-orm/pg-core";
 
 export const auth_token_type = pgEnum("auth_token_type", [
@@ -25,6 +28,13 @@ export const ai_usage_kind = pgEnum("ai_usage_kind", [
   "categorize",
 ]);
 export const subscription_plan = pgEnum("subscription_plan", ["free", "pro"]);
+
+export const budget_notification_status = pgEnum("budget_notification_status", [
+  "pending",
+  "processing",
+  "sent",
+  "failed",
+]);
 
 export const users = pgTable("users", {
   id: text("id").primaryKey(),
@@ -105,6 +115,76 @@ export const categories = pgTable("categories", {
   created_at: timestamp("created_at", { withTimezone: true, mode: "date" })
     .defaultNow(),
 });
+
+export const budgets = pgTable(
+  "budgets",
+  {
+    id: text("id").primaryKey(),
+    user_id: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    category_id: text("category_id")
+      .notNull()
+      .references(() => categories.id),
+    limit_minor: integer("limit_minor").notNull(),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    unique("budgets_user_category_unique").on(t.user_id, t.category_id),
+    check("budgets_limit_positive", sql`${t.limit_minor} > 0`),
+  ],
+);
+
+// One durable delivery record per budget and UTC calendar month. Snapshot
+// values and recipient survive subsequent budget edits. Delivery is implemented
+// separately; the generated key remains identical across every retry.
+export const budget_notifications = pgTable(
+  "budget_notifications",
+  {
+    id: text("id").primaryKey(),
+    budget_id: text("budget_id")
+      .notNull()
+      .references(() => budgets.id, { onDelete: "cascade" }),
+    // Derived from the UTC year/month when the notification is queued.
+    month: text("month").notNull(),
+    recipient_email: text("recipient_email").notNull(),
+    limit_minor: integer("limit_minor").notNull(),
+    spent_minor: integer("spent_minor").notNull(),
+    delivery_idempotency_key: text("delivery_idempotency_key")
+      .notNull()
+      .generatedAlwaysAs(sql`'budget-alert:' || "budget_id" || ':' || "month"`),
+    status: budget_notification_status("status").notNull().default("pending"),
+    attempt_count: integer("attempt_count").notNull().default(0),
+    next_retry_at: timestamp("next_retry_at", { withTimezone: true, mode: "date" }),
+    processing_at: timestamp("processing_at", { withTimezone: true, mode: "date" }),
+    sent_at: timestamp("sent_at", { withTimezone: true, mode: "date" }),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    unique("budget_notifications_budget_month_unique").on(t.budget_id, t.month),
+    unique("budget_notifications_delivery_key_unique").on(t.delivery_idempotency_key),
+    check(
+      "budget_notifications_month_format",
+      sql`${t.month} ~ '^[0-9]{4}-(0[1-9]|1[0-2])$' AND left(${t.month}, 4) <> '0000'`,
+    ),
+    check("budget_notifications_limit_positive", sql`${t.limit_minor} > 0`),
+    check("budget_notifications_spent_nonnegative", sql`${t.spent_minor} >= 0`),
+    check("budget_notifications_attempt_count_nonnegative", sql`${t.attempt_count} >= 0`),
+    index("budget_notifications_retry_idx").on(t.status, t.next_retry_at),
+  ],
+);
 
 export const import_batches = pgTable("import_batches", {
   id: text("id").primaryKey(),
