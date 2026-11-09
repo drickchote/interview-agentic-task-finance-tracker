@@ -22,7 +22,7 @@ export const Route = createFileRoute("/test-run-sweep")({
         if (action) {
           const userId = await requireUserId();
           if (action === "process") {
-            await processBudgetNotifications();
+            await processBudgetNotifications({ userId });
             return Response.json({ success: true });
           }
           if (action === "create") {

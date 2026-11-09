@@ -1,4 +1,4 @@
-import { and, asc, eq, lte, or } from "drizzle-orm";
+import { and, asc, eq, inArray, lte, or } from "drizzle-orm";
 import { db as defaultDb, schema, type Db } from "#/db";
 import { m } from "#/paraglide/messages";
 import { formatMinor } from "#/lib/money";
@@ -77,6 +77,8 @@ export async function processBudgetNotifications(
     now?: () => Date;
     send?: typeof sendEmail;
     limit?: number;
+    /** Optional tenant scope for explicit processing; maintenance omits it. */
+    userId?: string;
   } = {},
 ) {
   const db = options.db ?? defaultDb;
@@ -88,7 +90,20 @@ export async function processBudgetNotifications(
       const [row] = await tx
         .select()
         .from(schema.budget_notifications)
-        .where(due(now))
+        .where(
+          and(
+            due(now),
+            options.userId === undefined
+              ? undefined
+              : inArray(
+                  schema.budget_notifications.budget_id,
+                  tx
+                    .select({ id: schema.budgets.id })
+                    .from(schema.budgets)
+                    .where(eq(schema.budgets.user_id, options.userId)),
+                ),
+          ),
+        )
         .orderBy(asc(schema.budget_notifications.created_at))
         .limit(1)
         .for("update", { skipLocked: true });
